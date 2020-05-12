@@ -6,6 +6,14 @@
     "wt": "json"
   },
   "errors": {
-    "file": "Kann entfernte Datei nicht öffnen, Fehler: {}"
+    "file": "Kann entfernte Datei nicht öffnen, Fehler: {}",
+    "json": "Kann JSON String nicht interpretieren",
+    "key": "Der Eintrag {} kann nicht in der Einstellungsdatei gefunden werden"
+  },
+  "structure": {
+    "header": "responseHeader",
+    "body": "response",
+    "content": "docs",
+    "typeerror" : "TypeError in der Ausführung von {}"
   }
 }

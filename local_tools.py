@@ -3,3 +3,8 @@ def is_dictkey(dictionary, key):
         return True
     else:
         return False
+
+
+def is_dict(variable): # for all intense and purposes this is just an alias for isinstance
+    return isinstance(variable, dict)
+
