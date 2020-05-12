@@ -1,0 +1,11 @@
+{
+  "url": "http://172.18.85.143:8080/solr/biblio/select",
+  "url_para": {
+    "q": "*:*",
+    "rows": "2",
+    "wt": "json"
+  },
+  "errors": {
+    "file": "Kann entfernte Datei nicht öffnen, Fehler: {}"
+  }
+}
