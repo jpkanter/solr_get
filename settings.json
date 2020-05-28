@@ -2,10 +2,11 @@
   "url": "http://172.18.85.143:8080/solr/biblio/select",
   "url_para": {
     "q": "*:*",
-    "rows": "500",
+    "rows": "5000",
     "wt": "json"
   },
-  "chunk_size": "100",
+  "chunk_size": "1000",
+  "dump_file": "targetdump.json",
   "errors": {
     "file": "Kann entfernte Datei nicht öffnen, Fehler: {}",
     "json": "Kann JSON String nicht interpretieren",

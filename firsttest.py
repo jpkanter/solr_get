@@ -1,5 +1,6 @@
 # global python packages
 import copy
+from datetime import datetime
 import json
 import math
 import os
@@ -18,9 +19,10 @@ from local_tools import is_dict, is_dictkey
 MAIN_URL = ""
 MAIN_URL_PARAM = {}
 CHUNK_SIZE = 50
+GLOBAL = {}
 ERROR = {}
 STRUCTURE = {}
-statistic = {}
+STATISTIC = {}
 start_time = time.time()  # time for execution time
 
 
@@ -57,13 +59,16 @@ def load_config(file_path="settings.json"):
         if is_dictkey(data, "url"):
             MAIN_URL = data['url']
             MAIN_URL_PARAM = data['url_para']
-
         if is_dictkey(data, "chunk_size"):
             CHUNK_SIZE = int(data['chunk_size'])
+        if is_dictkey(data, "dump_file"):
+            GLOBAL['dump_file'] = data.get('dump_file', "default_dump_file.json")
 
 
 # directly requests from solr
-def load_remote_content(url, params):
+def load_remote_content(url, params, response_type=0):
+    # starts a GET request to the specified solr server with the provided list of parameters
+    # response types: 0 = just the content, 1 = just the header, 2 = the entire GET-RESPONSE
     time1 = time.time()
     try:
         resp = requests.get(url, params=params)
@@ -73,12 +78,18 @@ def load_remote_content(url, params):
 
         # print("Content:"
         print("Remote load took {} seconds".format(str(round(time.time() - time1, 3))))
-        return resp.text
+        if response_type == 0 or response_type > 2: # this seems ugly
+            return resp.text
+        elif response_type == 1:
+            return resp.headers
+        elif response_type == 2:
+            return resp
     except requests.exceptions.RequestException as e:
         send_error(e, "file")
 
 
 def test_json(json_str):
+    #  i am almost sure that there is already a build in function that does something very similar, embarrassing
     global ERROR
     try:
         data = json.loads(json_str)
@@ -104,21 +115,42 @@ def traverse_json_data(data):
                     continue
                 else:
                     for value3 in enumerate(value2):
-                        add_entry(value3)
+                        add_entry2statistic(value3)
+
+
+def traverse_json_response(data):
+    # just looks for the header information in a solr GET response
+    # technically i probably could just do data.get['response']
+    global STRUCTURE
+    for (key, value) in data.items():
+        if key == STRUCTURE['body']:
+            return value
+    return False  # inexperience with Python #45: is it okay to return a value OR just boolean False?
+
+
+def slice_header_json(data):
+    # cuts the header from the json response according to the provided structure (which is probably constant anyway)
+    # returns list of dictionaries
+    global STRUCTURE
+    if is_dict(data.get(STRUCTURE['body'])):
+        return data.get(STRUCTURE['body']).get(STRUCTURE['content'])
+
+    # either some ifs or a try block, same difference
+
 
 
 debug_json = []
 
 
-def add_entry(entry):
-    global statistic, ERROR, debug_json
+def add_entry2statistic(entry):
+    global STATISTIC, ERROR, debug_json
     try:
-        for key, value in entry[1].items():  # tuples start at 1, urg
+        for (key, value) in entry[1].items():  # tuples start at 1, urg
             # the actual entries are actually tuples and dont really possess a key and value like a dict does
-            if is_dictkey(statistic, key):
-                statistic[key] += 1
+            if is_dictkey(STATISTIC, key):
+                STATISTIC[key] += 1
             else:
-                statistic[key] = 1
+                STATISTIC[key] = 1
             # print("{} = {}".format(key, str(value)))
         debug_json.append(entry[1])
     except TypeError:
@@ -127,11 +159,17 @@ def add_entry(entry):
 
 def write_statistic(file_path="stats.json"):
     # this functions seems rather redundant, but it makes main a bit prettier
-    global statistic
+    global STATISTIC, start_time
+
+    now = datetime.now()
+    parameters = {'totalRows': MAIN_URL_PARAM['rows'],
+                  'date': now.strftime("%d.%m.%Y %H:%M:%S"),
+                  'excutionTime': "{} s".format(str(round(time.time() - start_time, 3)))}
+    # i have some seconds thoughts about writing tons of functions i a dictionary declaration
+    temp_list = {'parameters': parameters, 'stats': STATISTIC}
     try:
         with open(file_path, 'w') as outfile:
-            json.dump(statistic, outfile, indent=4)
-
+            json.dump(temp_list, outfile, indent=4)
         print("{} Bytes of Data were written to {}".format(os.stat(file_path).st_size, file_path))
     except FileExistsError:
         send_error("", "FileExistsError")
@@ -139,8 +177,26 @@ def write_statistic(file_path="stats.json"):
         send_error("", "FileNotFoundError")
 
 
+def crawl_statistic():
+    # this checks for all entries that are not always there, for that it just looks what entries we dont have as
+    # often as the total number of rows. Unfortunately this will generate a lot of empty request to the solr
+    global STATISTIC, MAIN_URL_PARAM, MAIN_URL
+    if(is_dictkey(MAIN_URL_PARAM, "rows")) and len(STATISTIC) > 0:  # just makes sure there is anything
+        for (key, value) in STATISTIC.items():
+            if value < int(MAIN_URL_PARAM.get('rows', 0)):  # this would be a prime case for multi processing
+                # http://172.18.85.143:8080/solr/biblio/select?q=author2:*&rows=0&start=0
+                print("=> Getting Full Stats for: {}".format(key))
+                request_param = {'q': key+':*', 'rows': '0', 'start': '0', 'wt': 'json'}  # all we really want is the head
+                data = test_json(load_remote_content(MAIN_URL, request_param))
+                response = traverse_json_response(data)  # or data.get['response']
+                STATISTIC[key] = response.get('numFound', STATISTIC.get(key, 0))  # holy recursion batman
+
+
 def main():
     load_config()  # default path should suffice
+
+    big_data = []
+
     # mechanism to not load 50000 entries in one go but use chunks for it
     n = math.floor(int(MAIN_URL_PARAM.get('rows')) / CHUNK_SIZE) + 1
     temp_url_param = copy.deepcopy(MAIN_URL_PARAM)  # otherwise dicts get copied by reference
@@ -153,16 +209,21 @@ def main():
             print(MAIN_URL_PARAM.get('rows'))
             temp_url_param['rows'] = int(int(MAIN_URL_PARAM.get('rows')) % CHUNK_SIZE)
         print(temp_url_param)
-        temp_json = load_remote_content(MAIN_URL, temp_url_param)
-        data = test_json(temp_json)
+        data = test_json(load_remote_content(MAIN_URL, temp_url_param))
         if data:  # no else required, test_json already gives us an error if something fails
             traverse_json_data(data)
-            write_statistic()
+            big_data += slice_header_json(data)
+
+    with open(GLOBAL['dump_file'], "w") as fw:
+        #  json.dump(big_data, fw, indent=4)
+        json.dump(big_data, fw, indent = None, separators = (",", ":"))
+    crawl_statistic()
+    write_statistic()
 
 
 if __name__ == "__main__":
     main()
     print("Overall Executiontime was {} seconds".format(str(round(time.time() - start_time, 3))))
-    print("Statistic has {} entries".format(len(statistic)))
+    print("Statistic has {} entries".format(len(STATISTIC)))
     with open("debug.json", "w") as fw:
         json.dump(debug_json, fw, indent=4)
